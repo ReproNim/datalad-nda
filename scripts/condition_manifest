@@ -5,6 +5,15 @@ Somehow, unlike with awk/sed monster, I do not see any where file is pointed to
 by different urls!
 
 TODOs:
+- ?NDA check if submission ID is chronological (we sort by it and download only latest)
+- ?NDA what happens when file is REMOVED from one submission to another?!
+  i.e. how could we tell that it was an incremental submission or
+  "full re-submission"?
+- Add a mode to do it only for a specific submission id?
+  Then we could establish chronology of uploads!  Then we can fail if
+  within the same submission we get multiple URLs for the same file!
+  May be that is best to do within datalad crawler!? otherwise we need multiple runs
+  while they go through different submission IDs.
 - add option to split into subdatasets e.g. for each subject (based on a regex)
   or should we do it while piping into `datalad addurls`?
 """
@@ -31,6 +40,7 @@ def get_num_lines(file_path):
         lines += 1
     return lines
 
+
 def cond1(row):
     """Basic conditioning of entries in row"""
     # we do not care about ""
@@ -44,7 +54,7 @@ def cond1(row):
               type=click.File('r'))
 @click.option('-o', '--output',
               default='-',
-              help='Output .tsv file to feed DataLad with.  Dumped to stdout if not provided',
+              help='Output .csv file to feed DataLad with.  Dumped to stdout if not provided',
               type=click.File('w'))
 def condition_manifest(input, output):
     url_regex = r's3://NDAR[^/]*/submission_[0-9]*/(?P<path>.*)'
@@ -114,9 +124,10 @@ def condition_manifest(input, output):
         out[path] = rec
     #multiurl_listing = '\n '.join(f' - {k}: {v}' for k, v in duplicates.items())
     lgr.info(f"Processed entire file: got {len(recs)} files with {len(duplicates)} files having multiple URLs to "
-             f"possibly reach them") # : {', '.join(duplicates)}")
+             f"possibly reach them")  # : {', '.join(duplicates)}")
 
-    writer = csv.DictWriter(output, fieldnames=header + ['path'])
+    writer = csv.DictWriter(output,# dialect=csv.excel_tab,
+                            fieldnames=header + ['path'])
     writer.writeheader()
     for rec in out.values():
         writer.writerow(rec)
