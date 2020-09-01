@@ -59,6 +59,11 @@ def cond1(row):
 def condition_manifest(input, output):
     url_regex = r's3://NDAR[^/]*/submission_[0-9]*/(?P<path>.*)'
     url_field = 'associated_file'
+    # regular expressions, matching which on path would result in adding
+    # '/' after them to signal the dataset boundary
+    dataset_boundaries = [
+        'derivatives/[^/]+'
+    ]
 
     lgr.info("Reading entire file")
     lines = list(input)
@@ -96,7 +101,7 @@ def condition_manifest(input, output):
 
     # in case of duplicates (the same url -> path) we keep only first hit record
     out = {}  # path: record.
-
+    subdatasets = set()
     prev_submission_id = None
     for rec in tqdm(recs, leave=False):
         submission_id = rec['submission_id']
@@ -118,12 +123,20 @@ def condition_manifest(input, output):
                 # we saw that url already! but it had a different path
                 raise ValueError(f'{url} already provided {url_to_paths[url]}')
 
+        for dataset_boundary in dataset_boundaries:
+            m = re.search(dataset_boundary, path)
+            if m:
+                b, e = m.span()
+                assert path[e] == '/'
+                path = '%s/%s' % (path[:e], path[e:])
+                subdatasets.add(path[:e])
         url_to_paths[url].add(path)
         # for convenience store  that path straight in the rec
         rec['path'] = path
         out[path] = rec
     #multiurl_listing = '\n '.join(f' - {k}: {v}' for k, v in duplicates.items())
-    lgr.info(f"Processed entire file: got {len(recs)} files with {len(duplicates)} files having multiple URLs to "
+    lgr.info(f"Processed entire file: got {len(recs)} files, {len(subdatasets)} subdatasets "
+             f"with {len(duplicates)} files having multiple URLs to "
              f"possibly reach them")  # : {', '.join(duplicates)}")
 
     writer = csv.DictWriter(output,# dialect=csv.excel_tab,
