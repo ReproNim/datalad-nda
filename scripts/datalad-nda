@@ -24,11 +24,14 @@ import click
 import csv
 import re
 import sys
+import stat
+
+import os.path as op
 
 from collections import defaultdict
 
 import logging
-lgr = logging.getLogger(__file__)
+lgr = logging.getLogger(op.basename(__file__))
 logging.basicConfig(level=logging.INFO)
 
 # Some constants which might becom options
@@ -101,12 +104,17 @@ output_option = click.option('-o', '--output',
 @input_option
 def submissions(input):
     """Print submission ids"""
-    header, recs = read_input(input)
+    _, recs = read_input(input)
+    submissions = get_submissions(recs)
+    lgr.info("%d unique submission ids found.  Printing in sorted order", len(submissions))
+    print('\n'.join(map(str, submissions)))
+
+
+def get_submissions(recs):
     submissions = sorted(set(
         r['submission_id']
         for r in tqdm(recs, total=len(recs), leave=False)))
-    lgr.info("%d unique submission ids found.  Printing in sorted order", len(submissions))
-    print('\n'.join(map(str, submissions)))
+    return submissions
 
 
 @click.command()
@@ -120,6 +128,114 @@ def condition4datalad(input, output, submission):
     """
     header, recs = read_input(input)
 
+    out = get_conditioned(recs, submission)
+    save_table(out, header, output)
+
+
+def save_table(recs, header, output):
+    writer = csv.DictWriter(output,  # dialect=csv.excel_tab,
+                            fieldnames=header + ['path'])
+    writer.writeheader()
+    for rec in recs.values():
+        writer.writerow(rec)
+    lgr.info("Saved output to %s", output)
+
+
+@click.command()
+@input_option
+@click.option("--fast", help="Use --fast git-annex mode", is_flag=True)
+@click.option("-d", "--dataset", help="Path to the dataset", default=None)
+@click.option("--develn", help="Number of files per submission to consider.  Only for development/test purposes",
+              default=None, type=int)
+def add2datalad(input, fast, dataset, develn):
+    """'Condition' and add to datalad (dataset in PWD) all submissions
+    """
+    import datalad.api as dl
+    from datalad.distribution.dataset import require_dataset
+    from datalad.customremotes.base import init_datalad_remote
+
+    ds = require_dataset(dataset, check_installed=False)
+
+    if not ds.is_installed():
+        lgr.info("Creating a new dataset at %s", ds.path)
+        ds.create()
+
+    if ds.repo.dirty:
+        raise RuntimeError(f"{dataset} is dirty.  Please save all your changes first")
+
+    # Prepare a procedure to be used for the datasets
+    nda_proc_path = ds.pathobj / ".datalad" / "procedures" / "cfg_nda"
+    if not nda_proc_path.exists():
+        lgr.info("Creating a helper procedure")
+        nda_proc_path.parent.mkdir()
+        # TODO: think about windows people and redo in Python?
+        nda_proc_path.write_text("""\
+#!/bin/bash
+
+set -eu
+
+cd "$1"
+
+git config core.splitIndex true
+git config annex.retry 3
+git annex initremote datalad externaltype=datalad type=external encryption=none autoenable=true
+""" +
+        "git config annex.security.allow-unverified-downloads ACKTHPPT" if fast else "")
+        nda_proc_path.chmod(nda_proc_path.stat().st_mode | stat.S_IEXEC)
+        ds.run_procedure('cfg_nda')
+
+#    if "datalad" not in ds.repo.get_remotes():
+#        init_datalad_remote(ds.repo, "datalad", autoenable=True)
+
+    header, recs = read_input(input)
+    submissions = get_submissions(recs)
+
+    # Ensure that "sourcedata" is a subdataset
+    if "sourcedata" not in ds.subdatasets(return_type='list', result_xfm='relpaths'):
+        ds.create("sourcedata")
+
+    # DataLad logging during addurls interfers with progressbars
+    logging.getLogger('datalad').setLevel(logging.WARNING)
+    # but then seems to not show progressbars :-/
+
+    cfg_var = 'datalad-nda.submissions.processed'
+    for submission in submissions:
+        submission = str(submission)  # ensure consistent dtype
+        if submission in ds.config.get(cfg_var, ()):
+            lgr.info("Skipping already processed submission %s", submission)
+            continue
+        lgr.info("Processing for submission %s", submission)
+        ds.config.add(cfg_var, submission, where='dataset')
+        submission_recs = get_conditioned(recs, submission)
+        # ATM we cannot just pass a list into addurls -- it wants a filename or would need to
+        # pipe via stdin, which is IMHO a bit too unpythonic for this script, so we will
+        # just store that file on drive, thus somewhat duplicating information on what
+        # submissions were processed as we store them in config as well.
+        submission_file = ds.pathobj / "sourcedata" / ("submission-%s.csv" % submission)
+        if not submission_file.parent.exists():
+            submission_file.parent.mkdir()
+
+        # if submission_file.lexists():
+        #     submission_file.unlink()
+        if develn:
+            submission_recs = {k: v for i, (k, v) in enumerate(submission_recs.items()) if i < develn}
+
+        with open(submission_file, 'w') as f:
+            save_table(submission_recs, header, f)
+        out = ds.addurls(
+            submission_file, '{associated_file}', '{path}',
+            exclude_autometa='*',
+            fast=fast,
+            save=False,
+            # result_renderer='default'
+            cfg_proc='nda'
+        )
+        # print(out)
+        ds.save(message=f"Added submission {submission} with {len(submission_recs)} entries",
+                recursive=True)
+
+
+def get_conditioned(recs, submission):
     if submission:
         submission = int(submission)
         lgr.info("Getting records only for submission_id=%s", submission)
@@ -128,7 +244,6 @@ def condition4datalad(input, output, submission):
     else:
         lgr.info(f"Sorting (in reverse by submission_id) assuming that later submission ID is the most up to date one")
         recs = sorted(recs, key=lambda r: r["submission_id"], reverse=True)
-
     # in case of duplicates (the same url -> path) we keep only first hit record
     out = {}  # path: record.
     url_to_paths = defaultdict(set)  # just to check if some url (now) doesn't provide multiple files
@@ -146,7 +261,7 @@ def condition4datalad(input, output, submission):
             raise ValueError(f"Cannot parse {url} using {url_regex!r}")
         path = url_match.groupdict()['path']
         if path in out:
-            duplicates[path].append(rec) # [url_field])
+            duplicates[path].append(rec)  # [url_field])
             known_url = out[path][url_field]
             if known_url != url:
                 lgr.debug(f'{path}: {url} != {known_url}')
@@ -166,17 +281,11 @@ def condition4datalad(input, output, submission):
         # for convenience store  that path straight in the rec
         rec['path'] = path
         out[path] = rec
-    #multiurl_listing = '\n '.join(f' - {k}: {v}' for k, v in duplicates.items())
+    # multiurl_listing = '\n '.join(f' - {k}: {v}' for k, v in duplicates.items())
     lgr.info(f"Processed entire file: got {len(recs)} files, {len(subdatasets)} subdatasets "
              f"with {len(duplicates)} files having multiple URLs to "
              f"possibly reach them")  # : {', '.join(duplicates)}")
-
-    writer = csv.DictWriter(output,# dialect=csv.excel_tab,
-                            fieldnames=header + ['path'])
-    writer.writeheader()
-    for rec in out.values():
-        writer.writerow(rec)
-    lgr.info("Saved output")
+    return out
 
 
 class LogLevel(click.ParamType):
@@ -290,6 +399,7 @@ def main(log_level, pdb=False):
     #     )
 
 
+main.add_command(add2datalad)
 main.add_command(condition4datalad)
 main.add_command(submissions)
 
