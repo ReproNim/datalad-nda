@@ -31,8 +31,11 @@ import os.path as op
 from collections import defaultdict
 
 import logging
-lgr = logging.getLogger(op.basename(__file__))
-logging.basicConfig(level=logging.INFO)
+# This would interfer with datalad logging, so we will just use DataLad's ways
+#lgr = logging.getLogger(op.basename(__file__))
+#logging.basicConfig(level=logging.INFO)
+from datalad.log import LoggerHelper
+lgr = LoggerHelper("datalad-nda").get_initialized_logger()
 
 # Some constants which might becom options
 url_regex = r's3://NDAR[^/]*/submission_[0-9]*/(?P<path>.*)'
@@ -196,7 +199,7 @@ git annex initremote datalad externaltype=datalad type=external encryption=none 
         ds.create("sourcedata", cfg_proc="nda")
 
     # DataLad logging during addurls interfers with progressbars
-    logging.getLogger('datalad').setLevel(logging.WARNING)
+    # logging.getLogger('datalad').setLevel(logging.WARNING)
     # but then seems to not show progressbars :-/
 
     cfg_var = 'datalad-nda.submissions.processed'
@@ -228,6 +231,7 @@ git annex initremote datalad externaltype=datalad type=external encryption=none 
             exclude_autometa='*',
             fast=fast,
             save=False,
+            ifexists="overwrite",
             cfg_proc='nda',
             on_failure="stop",
             # result_renderer='default'
@@ -283,10 +287,13 @@ def get_conditioned(recs, submission):
         # for convenience store  that path straight in the rec
         rec['path'] = path
         out[path] = rec
-    # multiurl_listing = '\n '.join(f' - {k}: {v}' for k, v in duplicates.items())
     lgr.info(f"Processed entire file: got {len(recs)} files, {len(subdatasets)} subdatasets "
              f"with {len(duplicates)} files having multiple URLs to "
              f"possibly reach them")  # : {', '.join(duplicates)}")
+    if len(duplicates):
+        #multiurl_listing = '\n '.join(f' - {k}: {v}' for k, v in duplicates.items())
+        multiurl_listing = '\n '.join(f' - {k}: {len(v)} records' for k, v in duplicates.items())
+        lgr.warning(multiurl_listing)
     return out
 
 
