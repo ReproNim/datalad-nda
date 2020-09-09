@@ -40,7 +40,8 @@ url_field = 'associated_file'
 # regular expressions, matching which on path would result in adding
 # '/' after them to signal the dataset boundary
 dataset_boundaries = [
-    'derivatives/[^/]+'
+    'derivatives/[^/]+',
+    'sourcedata',
 ]
 
 
@@ -192,7 +193,7 @@ git annex initremote datalad externaltype=datalad type=external encryption=none 
 
     # Ensure that "sourcedata" is a subdataset
     if "sourcedata" not in ds.subdatasets(return_type='list', result_xfm='relpaths'):
-        ds.create("sourcedata")
+        ds.create("sourcedata", cfg_proc="nda")
 
     # DataLad logging during addurls interfers with progressbars
     logging.getLogger('datalad').setLevel(logging.WARNING)
@@ -227,8 +228,9 @@ git annex initremote datalad externaltype=datalad type=external encryption=none 
             exclude_autometa='*',
             fast=fast,
             save=False,
+            cfg_proc='nda',
+            on_failure="stop",
             # result_renderer='default'
-            cfg_proc='nda'
         )
         # print(out)
         ds.save(message=f"Added submission {submission} with {len(submission_recs)} entries",
