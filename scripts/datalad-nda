@@ -31,6 +31,7 @@ import os.path as op
 from collections import defaultdict
 
 import logging
+import datalad
 # This would interfer with datalad logging, so we will just use DataLad's ways
 #lgr = logging.getLogger(op.basename(__file__))
 #logging.basicConfig(level=logging.INFO)
@@ -43,6 +44,7 @@ url_field = 'associated_file'
 # regular expressions, matching which on path would result in adding
 # '/' after them to signal the dataset boundary
 dataset_boundaries = [
+    'derivatives/[^/]+/sub-[^/]+',
     'derivatives/[^/]+',
     'sourcedata',
 ]
@@ -149,9 +151,10 @@ def save_table(recs, header, output):
 @input_option
 @click.option("--fast", help="Use --fast git-annex mode", is_flag=True)
 @click.option("-d", "--dataset", help="Path to the dataset", default=None)
+@click.option("-J", "--jobs", help="# of jobs for addurls", default=0, type=int)
 @click.option("--develn", help="Number of files per submission to consider.  Only for development/test purposes",
               default=None, type=int)
-def add2datalad(input, fast, dataset, develn):
+def add2datalad(input, fast, dataset, develn, jobs):
     """'Condition' and add to datalad (dataset in PWD) all submissions
     """
     import datalad.api as dl
@@ -180,13 +183,25 @@ set -eu
 
 cd "$1"
 
-git config core.splitIndex true
+# probably of no benefit for us here
+# git config core.splitIndex true
 git config annex.retry 3
-git annex initremote datalad externaltype=datalad type=external encryption=none autoenable=true
+# git config annex.jobs 4
+if git annex info | grep -q '\[datalad\]'; then
+    echo "There is already an enabled datalad remote, skipping"
+else
+    git annex initremote datalad externaltype=datalad type=external encryption=none autoenable=true
+fi
 """ +
         "git config annex.security.allow-unverified-downloads ACKTHPPT" if fast else "")
         nda_proc_path.chmod(nda_proc_path.stat().st_mode | stat.S_IEXEC)
         ds.run_procedure('cfg_nda')
+
+    # https://github.com/datalad/datalad/pull/4803 is IMHO suboptimal and not yet merged anyways and 
+    # no longer would work for addurls since we create subdatasets independently of superdataset,
+    # so let's just (ab)use datalad.locations.user-procedures to point to the procedures of the superds
+    # with this cfg_nda
+    datalad.cfg.set("datalad.locations.user-procedures", nda_proc_path.parent, where="override")
 
 #    if "datalad" not in ds.repo.get_remotes():
 #        init_datalad_remote(ds.repo, "datalad", autoenable=True)
@@ -209,7 +224,6 @@ git annex initremote datalad externaltype=datalad type=external encryption=none 
             lgr.info("Skipping already processed submission %s", submission)
             continue
         lgr.info("Processing for submission %s", submission)
-        ds.config.add(cfg_var, submission, where='dataset')
         submission_recs = get_conditioned(recs, submission)
         # ATM we cannot just pass a list into addurls -- it wants a filename or would need to
         # pipe via stdin, which is IMHO a bit too unpythonic for this script, so we will
@@ -219,26 +233,29 @@ git annex initremote datalad externaltype=datalad type=external encryption=none 
         if not submission_file.parent.exists():
             submission_file.parent.mkdir()
 
-        # if submission_file.lexists():
-        #     submission_file.unlink()
+        if submission_file.exists():
+            submission_file.unlink()
         if develn:
             submission_recs = {k: v for i, (k, v) in enumerate(submission_recs.items()) if i < develn}
-
         with open(submission_file, 'w') as f:
             save_table(submission_recs, header, f)
+        # print(out)
+        ds.save(message=f"Added submission {submission} with {len(submission_recs)} entries",
+                recursive=True)
         out = ds.addurls(
             submission_file, '{associated_file}', '{path}',
             exclude_autometa='*',
             fast=fast,
-            save=False,
+            # save=False,
             ifexists="overwrite",
             cfg_proc='nda',
             on_failure="stop",
+            jobs=jobs,
             # result_renderer='default'
         )
-        # print(out)
-        ds.save(message=f"Added submission {submission} with {len(submission_recs)} entries",
-                recursive=True)
+        ds.config.add(cfg_var, submission, where='dataset')
+        # recursive save takes too long so we just instruct to save the file we know needs saving
+        ds.save([ds.pathobj / '.datalad' / 'config'], message=f"Marking submission {submission} as done")
 
 
 def get_conditioned(recs, submission):
