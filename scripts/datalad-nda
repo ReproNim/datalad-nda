@@ -240,8 +240,10 @@ fi
         with open(submission_file, 'w') as f:
             save_table(submission_recs, header, f)
         # print(out)
-        ds.save(message=f"Added submission {submission} with {len(submission_recs)} entries",
-                recursive=True)
+        lgr.info("-> Saving new submission")
+        ds.save([submission_file],
+                message=f"Added submission {submission} with {len(submission_recs)} entries")
+        lgr.info("-> Adding URLs")
         out = ds.addurls(
             submission_file, '{associated_file}', '{path}',
             exclude_autometa='*',
@@ -253,6 +255,7 @@ fi
             jobs=jobs,
             # result_renderer='default'
         )
+        lgr.info("-> Marking submission as done")
         ds.config.add(cfg_var, submission, where='dataset')
         # recursive save takes too long so we just instruct to save the file we know needs saving
         ds.save([ds.pathobj / '.datalad' / 'config'], message=f"Marking submission {submission} as done")
