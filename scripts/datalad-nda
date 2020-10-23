@@ -220,7 +220,7 @@ fi
     cfg_var = 'datalad-nda.submissions.processed'
     for submission in submissions:
         submission = str(submission)  # ensure consistent dtype
-        if submission in ds.config.get(cfg_var, ()):
+        if submission in ds.config.get(cfg_var, (), get_all=True):
             lgr.info("Skipping already processed submission %s", submission)
             continue
         lgr.info("Processing for submission %s", submission)
