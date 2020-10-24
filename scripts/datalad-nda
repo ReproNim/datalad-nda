@@ -18,7 +18,7 @@ TODOs:
   or should we do it while piping into `datalad addurls`?
 """
 
-__version__ = '0.2'
+__version__ = '0.2.1'
 __version_message__ = f"\n\nProduced using datalad-nda {__version__}"
 
 import click
@@ -48,6 +48,7 @@ dataset_boundaries = [
     'derivatives/[^/]+/sub-[^/]+',
     'derivatives/[^/]+',
     'sourcedata',
+    'sub-[^/]+',
 ]
 
 
