@@ -18,7 +18,8 @@ TODOs:
   or should we do it while piping into `datalad addurls`?
 """
 
-__version__ = '0.1'
+__version__ = '0.2'
+__version_message__ = f"\n\nProduced using datalad-nda {__version__}"
 
 import click
 import csv
@@ -150,11 +151,12 @@ def save_table(recs, header, output):
 @click.command()
 @input_option
 @click.option("--fast", help="Use --fast git-annex mode", is_flag=True)
+@click.option("--drop-after", help="Drop files after adding to annex", is_flag=True)
 @click.option("-d", "--dataset", help="Path to the dataset", default=None)
 @click.option("-J", "--jobs", help="# of jobs for addurls", default=0, type=int)
 @click.option("--develn", help="Number of files per submission to consider.  Only for development/test purposes",
               default=None, type=int)
-def add2datalad(input, fast, dataset, develn, jobs):
+def add2datalad(input, fast, dataset, develn, jobs, drop_after):
     """'Condition' and add to datalad (dataset in PWD) all submissions
     """
     import datalad.api as dl
@@ -173,7 +175,7 @@ def add2datalad(input, fast, dataset, develn, jobs):
     # Prepare a procedure to be used for the datasets
     nda_proc_path = ds.pathobj / ".datalad" / "procedures" / "cfg_nda"
     if not nda_proc_path.exists():
-        lgr.info("Creating a helper procedure")
+        lgr.info("Creating a helper procedure %s", nda_proc_path)
         nda_proc_path.parent.mkdir()
         # TODO: think about windows people and redo in Python?
         nda_proc_path.write_text("""\
@@ -193,7 +195,7 @@ else
     git annex initremote datalad externaltype=datalad type=external encryption=none autoenable=true
 fi
 """ +
-        "git config annex.security.allow-unverified-downloads ACKTHPPT" if fast else "")
+        ("git config annex.security.allow-unverified-downloads ACKTHPPT" if fast else ""))
         nda_proc_path.chmod(nda_proc_path.stat().st_mode | stat.S_IEXEC)
         ds.run_procedure('cfg_nda')
 
@@ -242,7 +244,7 @@ fi
         # print(out)
         lgr.info("-> Saving new submission")
         ds.save([submission_file],
-                message=f"Added submission {submission} with {len(submission_recs)} entries")
+                message=f"Added submission {submission} with {len(submission_recs)} entries" + __version_message__)
         lgr.info("-> Adding URLs")
         out = ds.addurls(
             submission_file, '{associated_file}', '{path}',
@@ -253,12 +255,13 @@ fi
             cfg_proc='nda',
             on_failure="stop",
             jobs=jobs,
+            drop_after=drop_after,
             # result_renderer='default'
         )
         lgr.info("-> Marking submission as done")
         ds.config.add(cfg_var, submission, where='dataset')
         # recursive save takes too long so we just instruct to save the file we know needs saving
-        ds.save([ds.pathobj / '.datalad' / 'config'], message=f"Marking submission {submission} as done")
+        ds.save([ds.pathobj / '.datalad' / 'config'], message=f"Marking submission {submission} as done" + __version_message__)
 
 
 def get_conditioned(recs, submission):
