@@ -248,7 +248,9 @@ fi
                 message=f"Added submission {submission} with {len(submission_recs)} entries" + __version_message__)
         lgr.info("-> Adding URLs")
         out = ds.addurls(
-            submission_file, '{associated_file}', '{path}',
+            submission_file.relative_to(ds.path),
+            '{associated_file}',
+            '{path}',
             exclude_autometa='*',
             fast=fast,
             # save=False,
