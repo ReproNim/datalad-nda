@@ -204,7 +204,7 @@ fi
     # no longer would work for addurls since we create subdatasets independently of superdataset,
     # so let's just (ab)use datalad.locations.user-procedures to point to the procedures of the superds
     # with this cfg_nda
-    datalad.cfg.set("datalad.locations.user-procedures", nda_proc_path.parent, where="override")
+    datalad.cfg.set("datalad.locations.user-procedures", str(nda_proc_path.parent), where="override")
 
 #    if "datalad" not in ds.repo.get_remotes():
 #        init_datalad_remote(ds.repo, "datalad", autoenable=True)
@@ -248,7 +248,7 @@ fi
                 message=f"Added submission {submission} with {len(submission_recs)} entries" + __version_message__)
         lgr.info("-> Adding URLs")
         out = ds.addurls(
-            submission_file.relative_to(ds.path),
+            str(submission_file.relative_to(ds.path)),
             '{associated_file}',
             '{path}',
             exclude_autometa='*',
